@@ -7,6 +7,63 @@
  */
 class Auth_Sprig extends Auth {
 
+	// Cache the Authenticated User Object
+	protected $_user_auth = NULL;
+
+	// Cache the Sprig User Objects
+	protected $_user_cache = array();
+
+	// Model Name for Users
+	protected $_user_model = NULL;
+
+	// Model Name for Tokens
+	protected $_token_model = NULL;
+	
+	/**
+	 * Sets and Gets the Model used for Users
+	 *
+	 * @param string $model
+	 * @return mixed 
+	 */
+	public function user_model($model = NULL)
+	{
+		if (isset($model))
+		{
+			$this->_user_model = $model;
+			return $this;
+		}
+
+		if ( ! isset($this->_user_model))
+		{
+			$this->_user_model = (isset($this->config->user_model))
+				? $this->config->user_model
+				: 'User';
+		}
+		return $this->_user_model;
+	}
+	
+	/**
+	 * Sets and Gets the Model used for Tokens
+	 *
+	 * @param string $model
+	 * @return mixed 
+	 */
+	public function token_model($model = NULL)
+	{
+		if (isset($model))
+		{
+			$this->_token_model = $model;
+			return $this;
+		}
+		if ( ! isset($this->_token_model))
+		{
+			$this->_token_model = (isset($this->config->token_model))
+				? $this->config->token_model
+				: 'User_Token';
+		}
+		return $this->_token_model;
+	}
+	
 	/**
 	 * Checks if a session is active.
 	 *
@@ -18,47 +75,23 @@ class Auth_Sprig extends Auth {
 	{
 		$status = FALSE;
 
-		// Get the user from the session
-		$user = $this->session->get($this->config['session_key']);
-		
-		if ( ! is_object($user))
+		// Get the user
+		$user = $this->_load_user();
+	
+		if ($user instanceof Sprig AND $user->loaded())
 		{
-			// Attempt auto login
-			if ($this->auto_login())
-			{
-				// Success, get the user back out of the session
-				$user = $this->session->get($this->config['session_key']);
-			}
-		}
-
-		if (is_object($user) AND $user instanceof Model_User AND $user->loaded())
-		{
-			// Everything is okay so far
-			$status = TRUE;
-
+			// Check for a role requirement
 			if ( ! empty($role))
 			{
-
-				// If role is an array
-				if (is_array($role))
-				{
-					// Check each role
-					foreach ($role as $role_iteration)
-					{
-						// If the user doesn't have the role
-						if( ! $user->has_role($role_iteration))
-						{
-							// Set the status false and get outta here
-							$status = FALSE;
-							break;
-						}
-					}
-				}
-				else
-				{
-					// Check that the user has the given role
-					$status = $user->has_role($role);
-				}
+				// See if role is a set
+				$status = (is_array($role))
+					? $user->has_roles($role)
+					: $user->has_role($role);
+			}
+			else
+			{
+				// No Role Check, return true
+				$status = TRUE;
 			}
 		}
 
@@ -75,28 +108,32 @@ class Auth_Sprig extends Auth {
 	 */
 	public function _login($user, $password, $remember)
 	{
+		// Make sure we're logged out first
+		if (isset($this->_user_auth))
+		{
+			$this->logout();
+		}
+
 		// Make sure we have a user object
-		$user = $this->_get_object($user);
-		
+		$login = $this->_get_object($user);
+
 		// If the passwords match, perform a login
-		if ($user->has_role('login') AND $user->password === $password)
+		if ($login instanceof Sprig
+			AND $login->loaded()
+			AND $login->has_role('login')
+			AND $login->password === $password)
 		{
 			if ($remember === TRUE)
 			{
 				// Create a new autologin token
-				$token = Sprig::factory('user_token');
-
-				// Set token data
-				$token->user = $user->id;
-				$token->expires = time() + $this->config['lifetime'];
-				$token->create();
+				$token = $this->new_token($login);
 
 				// Set the autologin cookie
-				cookie::set('authautologin', $token->token, $this->config['lifetime']);
+				cookie::set('authautologin', $token->token, $token->expires);
 			}
 
 			// Finish the login
-			$this->complete_login($user);
+			$this->complete_login($login);
 
 			return TRUE;
 		}
@@ -114,13 +151,76 @@ class Auth_Sprig extends Auth {
 	public function force_login($user)
 	{
 		// Make sure we have a user object
-		$user = $this->_get_object($user);
+		$login = $this->_get_object($user);
+		
+		if ($login instanceof Sprig AND $login->loaded())
+		{
+			// Mark the session as forced, to prevent users from changing account information
+			$this->session->set('auth_forced', TRUE);
 
-		// Mark the session as forced, to prevent users from changing account information
-		$this->session->set('auth_forced', TRUE);
+			// Run the standard completion
+			$this->complete_login($login);
+		}
+	}
 
-		// Run the standard completion
-		$this->complete_login($user);
+	/**
+	 * Generates a new token for the specified user
+	 * 
+	 * @param  Sprig User
+	 * @return Sprig User_Token
+	 */
+	public function new_token(Sprig $user, $expires = NULL)
+	{
+		if ($user->loaded())
+		{
+			// Create a new token
+			$token = Sprig::factory($this->token_model());
+			$expires = (isset($expires))
+				? $expires
+				: time() + $this->config['lifetime'];
+
+			// Set token data
+			$token->user = $user->id;
+			$token->expires = $expires;
+			$token->create();
+
+			return $token;
+		}
+	}
+	
+	/**
+	 * Logs a user in, based on a one-use token value.
+	 * Useful for password resets or email verification
+	 *
+	 * @param   string  Token value
+	 * @return  boolean
+	 */
+	public function token_login($token)
+	{
+		// Load the token and user
+		if ( ! $token instanceof Sprig)
+		{
+			$token = Sprig::factory($this->token_model(), array('token' => $token))->load();
+		}
+
+		if ($token->loaded() AND $token->user->load() AND $token->user->loaded())
+		{
+			if ($token->user_agent === sha1(Request::$user_agent))
+			{
+				// Complete the login with the found data
+				$this->complete_login($token->user);
+
+				// Delete the token once used
+				$token->delete();
+
+				// Token login was successful
+				return TRUE;
+			}
+
+			// Token is invalid
+			$token->delete();
+		}
+		return FALSE;
 	}
 
 	/**
@@ -133,8 +233,8 @@ class Auth_Sprig extends Auth {
 		if ($token = cookie::get('authautologin'))
 		{
 			// Load the token and user
-			$token = Sprig::factory('user_token', array('token' => $token))->load();			
-			
+			$token = Sprig::factory($this->token_model(), array('token' => $token))->load();
+
 			if ($token->loaded() AND $token->user->load() AND $token->user->loaded())
 			{
 				if ($token->user_agent === sha1(Request::$user_agent))
@@ -175,18 +275,17 @@ class Auth_Sprig extends Auth {
 			cookie::delete('authautologin');
 			
 			// Clear the autologin token from the database
-			$token = Sprig::factory('user_token', array('token' => $token))->load();
-			
-			if ($token->loaded() AND $logout_all)
-			{
-				Sprig::factory('user_token', array('user_id' => $token->user->id))->delete();
-			}
-			elseif ($token->loaded())
-			{
-				$token->delete();
-			}
+			$token = Sprig::factory($this->token_model(), array('token' => $token))->delete();
 		}
 
+		// Delete all the User's Tokens
+		if (isset($this->_user_auth) AND $logout_all)
+		{
+			Sprig::factory($this->token_model(), array('user' => $this->_user_auth->id))->delete();
+		}
+
+		// Removed the cached user
+		$this->_user_auth = NULL;
 		return parent::logout($destroy);
 	}
 
@@ -200,8 +299,10 @@ class Auth_Sprig extends Auth {
 	{
 		// Make sure we have a user object
 		$user = $this->_get_object($user);
-
-		return $user->password;
+		if ($user instanceof Sprig AND $user->loaded())
+		{
+			return $user->password;
+		}
 	}
 
 	/**
@@ -222,24 +323,90 @@ class Auth_Sprig extends Auth {
 		// Save the user
 		$user->update();
 
-		return parent::complete_login($user);
+		// Cache the user
+		$this->_user_auth = $user;
+
+		// Regenerate session_id
+		$this->session->regenerate();
+
+		// Store User ID in an array...
+		$store = array('id' => $user->id);
+
+		// Store user info in session
+		$this->session->set($this->config['session_key'], $store);
 	}
-	
+
 	/**
-	 * Convert a unique identifier string to a user object
+	 * Gets the currently logged in user from the session.
+	 * Returns FALSE if no user is currently logged in.
+	 *
+	 * @return  mixed
+	 */
+	public function get_user()
+	{
+		// Return cached User object if set
+		return ($this->logged_in() AND isset($this->_user_auth))
+			? $this->_user_auth
+			: FALSE;
+	}
+
+	/**
+	 * Load the user from cache, session, or autologin token
 	 * 
+	 * @return Model_User
+	 */
+	protected function _load_user()
+	{
+		// Return the cached user if set
+		if (isset($this->_user_auth)) return $this->_user_auth;
+
+		// Grab the User from the Session
+		$user = $this->session->get($this->config['session_key'], FALSE);
+
+		// No user in session, try tokens
+		if ($user === FALSE)
+		{
+			// Attempt auto login
+			if ($this->auto_login())
+			{
+				// Success, retrieve the user
+				return (isset($this->_user_auth))
+					? $this->_user_auth
+					: FALSE;
+			}
+			// Nothing found...
+			return FALSE;
+		}
+
+		// Load the User Model from the stored array
+		$user = Sprig::factory($this->user_model(), $user)->load();
+
+		if($user->loaded())
+		{
+			// Cache and return User Object
+			return $this->_user_auth = $user;
+		}
+
+		return FALSE;
+	}
+
+	/**
+	 * Convert a unique identifier string or a values array to a user object
+	 *
 	 * @param mixed $user
 	 * @return Model_User
 	 */
 	protected function _get_object($user)
 	{
-		if ( ! is_object($user))
+		// Return Existing objects
+		if ($user instanceof Sprig) return $user;
+
+		if( ! isset($this->_user_cache[$user]))
 		{
-			// Load the user using special factory method
-			$user = Model_User::factory($user)->load();			
+			$this->_user_cache[$user] = Sprig::factory($this->user_model())->unique_key($user);
 		}
-		
-		return $user;
+
+		return $this->_user_cache[$user];
 	}
 
 } // End Auth_Sprig_Driver

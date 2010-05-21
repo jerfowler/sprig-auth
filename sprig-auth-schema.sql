@@ -10,10 +10,12 @@ INSERT INTO `roles` (`id`, `name`, `description`) VALUES(1, 'login', 'Login priv
 INSERT INTO `roles` (`id`, `name`, `description`) VALUES(2, 'admin', 'Administrative user, has access to everything.');
  
 CREATE TABLE IF NOT EXISTS `roles_users` (
-  `user_id` int(11) UNSIGNED NOT NULL,
-  `role_id` int(11) UNSIGNED NOT NULL,
-  PRIMARY KEY  (`user_id`,`role_id`),
-  KEY `fk_role_id` (`role_id`)
+  `id` int(11) unsigned NOT NULL auto_increment,
+  `user_id` int(11) unsigned NOT NULL,
+  `role_id` int(11) unsigned NOT NULL,
+  PRIMARY KEY  (`id`),
+  UNIQUE KEY `fk_user_id` (`user_id`,`role_id`),
+  KEY `fk_role_id` (`role_id`,`user_id`),
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
  
 CREATE TABLE IF NOT EXISTS `users` (

@@ -13,3 +13,5 @@ If this causes problems for you please raise it as an issue or just override Aut
 1.    There is an outstanding issue with serializing Database reslts and therefore sprig objects with many realtions.
 	See [Sprig issue 40](http://github.com/shadowhand/sprig/issues/#issue/40)
 	Since this has gone along time without update, I have included the fix (hack?) in this model to make it work with current Sprig veersion.
+	
+	UPDATE: Now Auth drive only stores the id of the user rather than the whole serialized user object

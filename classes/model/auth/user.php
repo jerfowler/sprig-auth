@@ -10,6 +10,8 @@ class Model_Auth_User extends Sprig
 
 	protected $_sorting = array('username' => 'asc');
 
+	protected $_refresh = array();
+
 	protected function _init()
 	{
 		$this->_fields += array(
@@ -56,57 +58,53 @@ class Model_Auth_User extends Sprig
 				'through' => 'roles_users',
 			)),
 		);
+
+		$this->_refresh += array('tokens', 'roles');
 	}
-	
+
 	/**
-	 * Convenience factory for getting user by any unique key
+	 *  Refreshes fields in the _refresh list
+	 *  Used to always get uncached "fresh" results
+	 *
+	 * @param string $name
+	 * @return mixed
+	 */
+	public function __get($name)
+	{
+		if (isset($this->_refresh[$name]))
+		{
+			return $this->refresh($name);
+		}
+		return parent::__get($name);
+	}
+
+	/**
+	 * Convenience method for getting user by any unique key
 	 * @param mixed string unique key (email or username), or integer id
-	 * @param array	dummy param to make method compatible with Sprig::factory
 	 * @return Model_Auth_User
 	 */
-	public static function factory($username, array $dummy = NULL)
+	public function unique_key($key)
 	{
-		$user = parent::factory('User');
-		return $user->values(array($user->unique_key($username) => $username));
+		if ( ! empty($key))
+		{
+			$this->state('loading');
+
+			$this->load(DB::select()
+				->where('username', '=', $key)
+				->or_where('email', '=', $key)
+				->or_where('id', '=', $key));
+		}
+
+		return $this;
 	}
 	
 	/**
-	 * Allow serialization of initialized object containing related objects as a Database_Result
-	 * 
-	 * @return array	list of properties to serialize
+	 * NOTE: __sleep no longer needed and was removed
+	 *  - Auth no longer stores the whole object in the session
+	 *  - It was useless without a __wake
+	 *  - Utilizing the Serialize interface in the Sprig core
+	 *    class would be a better solution
 	 */
-	public function __sleep()
-	{
-		foreach ($this->_related as $name => $object)
-		{
-			if ($object instanceof Database_Result)
-			{
-				if ($object instanceof Database_Result_Cached)
-				{
-					continue;
-				}
-				
-				// Get model name
-				$model = $this->_fields[$name]->model;
-				
-				// Convert result object to cached result to allow for serialization
-				// Currently no way to get the $_query property form the result to pass to the cached result
-				// @see http://dev.kohanaphp.com/issues/2297
-				
-				$this->_related[$name] = new Database_Result_Cached($object->as_array(), '', get_class(Sprig::factory($model)));			
-			}
-		}		
-		
-		// Return array of all properties to get them serialised
-		$props = array();
-		
-		foreach ($this as $prop => $val)
-		{
-			$props[] = $prop;
-		}
-		
-		return $props;
-	}
 	
 	/**
 	 * Validate callback wrapper for checking password match
@@ -119,10 +117,10 @@ class Model_Auth_User extends Sprig
 		$auth = Auth::instance();
 		
 		$salt = $auth->find_salt($array['password']);		
-		
+
 		if ($array['password'] !== $auth->hash_password($array[$field], $salt))
 		{
-			// Re-use the error messge from the 'matches' rule in Validate
+			// Re-use the error message from the 'matches' rule in Validate
 			$array->error($field, 'matches', array('param1' => 'password'));
 		}
 	}
@@ -130,7 +128,7 @@ class Model_Auth_User extends Sprig
 	/**
 	 * Check if user has a particular role
 	 * @param mixed $role 	Role to test for, can be Model_Role object, string role name of integer role id
-	 * @return bool			Whether or not the user has the requested role
+	 * @return bool	    Whether or not the user has the requested role
 	 */
 	public function has_role($role)
 	{
@@ -150,34 +148,71 @@ class Model_Auth_User extends Sprig
 			$key = 'id';
 			$val = (int) $role;
 		}
-		
-		foreach ($this->roles as $user_role)
+
+		$values = $this->refresh('roles')->as_array(NULL,$key);
+		return (in_array($val, $values));
+	}
+
+	/**
+	 * Check if user has a set of particular roles
+	 * @param mixed $role 	Role to test for, can be Model_Role object, string role name of integer role id
+	 * @return bool	    Whether or not the user has the requested role
+	 */
+	public function has_roles(array $roles)
+	{
+		// Check what sort of arguments
+		$check = array('ids' => array(), 'names' => array());
+		foreach($roles as $role)
 		{
-			if ($user_role->{$key} === $val)
+			if ($role instanceof Model_Role)
 			{
-				return TRUE;
+				$check['ids'][] = $role->id;
+			}
+			elseif (is_string($role))
+			{
+				$check['names'][] = $role;
+			}
+			else
+			{
+				$check['ids'][] = (int) $role;
 			}
 		}
-		
-		return FALSE;
+		$values = $this->refresh('roles')->as_array('id','name');
+		$diff  = array_diff($check['ids'], array_keys($values));
+		$diff += array_diff($check['names'], array_values($values));
+		return (count($diff) == 0);
 	}
-	
+
 	/**
-	 * Get unique key based on value
-	 * @param mixed $value	Kay value for match
-	 * @return string		Unique key name to attempt to match against
+	 * Refresh/Reset the _related array
+	 *
+	 * @param string $field	    The name of teh related field
+	 * @return mixed    Returns $this when fields is NULL or the field specified
 	 */
-	public function unique_key($value)
+	public function refresh($field = NULL)
 	{
-		if (Validate::email($value))
+		// Refresh the user data is $field is NULL
+		if ($field === NULL)
 		{
-			return 'email';
-		} 
-		elseif (is_string($value))
-		{
-			return 'username';
+			// Save the id
+			$id = $this->id;
+			//Reset the storage arrays
+			$this->_original =
+			$this->_changed =
+			$this->_related = array();
+			// Set the id and return the loaded user
+			$this->id = $id;
+			return $this->load();
 		}
-		return 'id';
+
+		// Only refresh loaded related fields
+		if (isset($this->_related[$field]))
+		{
+			unset($this->_related[$field]);
+			unset($this->_original[$field]);
+		}
+
+		return parent::__get($field);
 	}
-	
+
 } // End Model_Auth_User
