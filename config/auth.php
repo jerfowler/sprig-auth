@@ -4,7 +4,7 @@ return array
 (
 	'driver' => 'Sprig',
 	'hash_method' => 'sha1',
-	'salt_pattern' => '2, 3, 5, 7, 11, 13, 17, 19, 23, 29',
+	'salt_pattern' => '1, 3, 5, 9, 14, 15, 20, 21, 28, 30',
 	'lifetime' => 1209600,
 	'session_key' => 'auth_user',
 	'user_model' => 'User',

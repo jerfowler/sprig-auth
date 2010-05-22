@@ -164,7 +164,7 @@ class Model_Auth_User extends Sprig
 		$check = array('ids' => array(), 'names' => array());
 		foreach($roles as $role)
 		{
-			if ($role instanceof Model_Role)
+			if ($role instanceof Sprig)
 			{
 				$check['ids'][] = $role->id;
 			}
