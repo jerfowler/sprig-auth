@@ -35,8 +35,8 @@ class Auth_Sprig extends Auth {
 
 		if ( ! isset($this->_user_model))
 		{
-			$this->_user_model = (isset($this->config->user_model))
-				? $this->config->user_model
+			$this->_user_model = (isset($this->_config->user_model))
+				? $this->_config->user_model
 				: 'User';
 		}
 		return $this->_user_model;
@@ -57,8 +57,8 @@ class Auth_Sprig extends Auth {
 		}
 		if ( ! isset($this->_token_model))
 		{
-			$this->_token_model = (isset($this->config->token_model))
-				? $this->config->token_model
+			$this->_token_model = (isset($this->_config->token_model))
+				? $this->_config->token_model
 				: 'User_Token';
 		}
 		return $this->_token_model;
@@ -156,7 +156,7 @@ class Auth_Sprig extends Auth {
 		if ($login instanceof Sprig AND $login->loaded())
 		{
 			// Mark the session as forced, to prevent users from changing account information
-			$this->session->set('auth_forced', TRUE);
+			$this->_session->set('auth_forced', TRUE);
 
 			// Run the standard completion
 			$this->complete_login($login);
@@ -177,7 +177,7 @@ class Auth_Sprig extends Auth {
 			$token = Sprig::factory($this->token_model());
 			$expires = (isset($expires))
 				? $expires
-				: time() + $this->config['lifetime'];
+				: time() + $this->_config['lifetime'];
 
 			// Set token data
 			$token->user = $user->id;
@@ -203,7 +203,10 @@ class Auth_Sprig extends Auth {
 			$token = Sprig::factory($this->token_model(), array('token' => $token))->load();
 		}
 
-		if ($token->loaded() AND $token->user->load() AND $token->user->loaded())
+		if ($token->loaded()
+			AND $token->user->load()
+			AND $token->user->loaded()
+			AND $token->user->has_role('login'))
 		{
 			if ($token->user_agent === sha1(Request::$user_agent))
 			{
@@ -235,7 +238,10 @@ class Auth_Sprig extends Auth {
 			// Load the token and user
 			$token = Sprig::factory($this->token_model(), array('token' => $token))->load();
 
-			if ($token->loaded() AND $token->user->load() AND $token->user->loaded())
+			if ($token->loaded()
+				AND $token->user->load()
+				AND $token->user->loaded()
+				AND $token->user->has_role('login'))
 			{
 				if ($token->user_agent === sha1(Request::$user_agent))
 				{
@@ -327,13 +333,13 @@ class Auth_Sprig extends Auth {
 		$this->_user_auth = $user;
 
 		// Regenerate session_id
-		$this->session->regenerate();
+		$this->_session->regenerate();
 
 		// Store User ID in an array...
 		$store = array('id' => $user->id);
 
 		// Store user info in session
-		$this->session->set($this->config['session_key'], $store);
+		$this->_session->set($this->_config['session_key'], $store);
 	}
 
 	/**
@@ -344,10 +350,7 @@ class Auth_Sprig extends Auth {
 	 */
 	public function get_user()
 	{
-		// Return cached User object if set
-		return ($this->logged_in() AND isset($this->_user_auth))
-			? $this->_user_auth
-			: FALSE;
+		return $this->_load_user();
 	}
 
 	/**
@@ -361,7 +364,7 @@ class Auth_Sprig extends Auth {
 		if (isset($this->_user_auth)) return $this->_user_auth;
 
 		// Grab the User from the Session
-		$user = $this->session->get($this->config['session_key'], FALSE);
+		$user = $this->_session->get($this->_config['session_key'], FALSE);
 
 		// No user in session, try tokens
 		if ($user === FALSE)
@@ -381,7 +384,7 @@ class Auth_Sprig extends Auth {
 		// Load the User Model from the stored array
 		$user = Sprig::factory($this->user_model(), $user)->load();
 
-		if($user->loaded())
+		if($user->loaded() AND $user->has_role('login'))
 		{
 			// Cache and return User Object
 			return $this->_user_auth = $user;

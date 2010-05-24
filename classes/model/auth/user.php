@@ -10,8 +10,6 @@ class Model_Auth_User extends Sprig
 
 	protected $_sorting = array('username' => 'asc');
 
-	protected $_refresh = array();
-
 	protected function _init()
 	{
 		$this->_fields += array(
@@ -58,24 +56,6 @@ class Model_Auth_User extends Sprig
 				'through' => 'roles_users',
 			)),
 		);
-
-		$this->_refresh += array('tokens', 'roles');
-	}
-
-	/**
-	 *  Refreshes fields in the _refresh list
-	 *  Used to always get uncached "fresh" results
-	 *
-	 * @param string $name
-	 * @return mixed
-	 */
-	public function __get($name)
-	{
-		if (isset($this->_refresh[$name]))
-		{
-			return $this->refresh($name);
-		}
-		return parent::__get($name);
 	}
 
 	/**
@@ -133,7 +113,7 @@ class Model_Auth_User extends Sprig
 	public function has_role($role)
 	{
 		// Check what sort of argument we have been passed
-		if ($role instanceof Model_Role)
+		if ($role instanceof Sprig)
 		{
 			$key = 'id';
 			$val = $role->id;
@@ -212,7 +192,7 @@ class Model_Auth_User extends Sprig
 			unset($this->_original[$field]);
 		}
 
-		return parent::__get($field);
+		return $this->{$field};
 	}
 
 } // End Model_Auth_User
